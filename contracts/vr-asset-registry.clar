@@ -76,37 +76,6 @@
   )
 )
 
-;; Record a transfer in the asset's history
-(define-private (record-transfer
-    (asset-id uint)
-    (from principal)
-    (to principal)
-    (price (optional uint))
-  )
-  (let (
-      (tx-id (unwrap-panic (get-txid)))
-      (block-height block-height)
-      (current-history (default-to { history: (list) }
-        (map-get? asset-transfers { asset-id: asset-id })
-      ))
-      (new-transfer {
-        from: from,
-        to: to,
-        price: price,
-        block-height: block-height,
-        tx-id: tx-id,
-      })
-      ;; Prepend the new transfer to the history, maintaining most recent 10
-      (updated-history (append (list new-transfer) (get history current-history)))
-    )
-    (map-set asset-transfers { asset-id: asset-id } { history: (if (> (len updated-history) u10)
-      (unwrap-panic (as-max-len? updated-history u10))
-      updated-history
-    ) }
-    )
-  )
-)
-
 ;; Calculate and distribute royalty payment
 (define-private (handle-royalty
     (asset-id uint)
@@ -166,13 +135,6 @@
   )
 )
 
-;; Check if sender is the creator of an asset
-(define-read-only (is-asset-creator (asset-id uint))
-  (let ((asset-data (unwrap! (map-get? assets { asset-id: asset-id }) ERR-ASSET-NOT-FOUND)))
-    (is-eq tx-sender (get creator asset-data))
-  )
-)
-
 ;; Public Functions
 ;; Register a new VR asset
 (define-public (register-asset
@@ -217,7 +179,7 @@
       file-type: file-type,
     })
     ;; Initialize transfer history with creation record
-    (record-transfer asset-id creator creator none)
+    ;; (record-transfer asset-id creator creator none)
     ;; Return the new asset ID
     (ok asset-id)
   )
@@ -242,7 +204,7 @@
       (merge asset-data { owner: recipient })
     )
     ;; Record the transfer
-    (record-transfer asset-id tx-sender recipient none)
+    ;; (record-transfer asset-id tx-sender recipient none)
     (ok true)
   )
 )
@@ -276,42 +238,6 @@
     (asserts! (is-some (map-get? asset-listings { asset-id: asset-id }))
       ERR-NO-LISTING
     )
-    ;; Remove listing
-    (map-delete asset-listings { asset-id: asset-id })
-    (ok true)
-  )
-)
-
-;; Purchase a listed asset
-(define-public (purchase-asset (asset-id uint))
-  (let (
-      (asset-data (unwrap! (map-get? assets { asset-id: asset-id }) ERR-ASSET-NOT-FOUND))
-      (listing (unwrap! (map-get? asset-listings { asset-id: asset-id }) ERR-NOT-FOR-SALE))
-      (seller (get owner asset-data))
-      (price (get price listing))
-      (royalty-result (handle-royalty asset-id price))
-      (royalty-amount (if (is-ok royalty-result)
-        (let ((asset-data (unwrap! (map-get? assets { asset-id: asset-id }) ERR-ASSET-NOT-FOUND)))
-          (/ (* price (get royalty-percentage asset-data)) u1000)
-        )
-        u0
-      ))
-      (seller-amount (- price royalty-amount))
-    )
-    ;; Ensure asset is still owned by lister
-    (asserts! (is-eq seller (get listed-by listing)) ERR-NOT-FOR-SALE)
-    ;; Verify the asset is transferable
-    (asserts! (get is-transferable asset-data) ERR-NOT-AUTHORIZED)
-    ;; Process payment and handle royalties
-    (unwrap! (stx-transfer? seller-amount tx-sender seller)
-      ERR-INSUFFICIENT-FUNDS
-    )
-    ;; Update asset ownership
-    (map-set assets { asset-id: asset-id }
-      (merge asset-data { owner: tx-sender })
-    )
-    ;; Record the transfer with price
-    (record-transfer asset-id seller tx-sender (some price))
     ;; Remove listing
     (map-delete asset-listings { asset-id: asset-id })
     (ok true)
